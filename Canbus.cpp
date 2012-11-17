@@ -26,7 +26,21 @@
 
 #include <HardwareSerial.h>
 
-#define DEBUG 1
+#define DEBUG 0
+
+
+const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
+    "Driving and plugged in",
+    "Interlock tripped",
+    "Communication fault",
+    "Charge over current",
+    "Discharge over current",
+    "Over Temperature",
+    "Under voltage",
+    "Over voltage",
+    "BMS not found on CAN Bus",
+    "CAN Bus init failed"
+};
 
 
 // http://lithiumate.elithion.com/php/menu_setup.php#Standard_output_messages
@@ -52,6 +66,8 @@
 #define ELITHION_PID_PACK_ENERGY_OUT 0x55
 #define ELITHION_PID_PACK_SOH 0x56
 
+#define ELITHION_PID_FAULT 0x62
+
 #define ELITHION_PID_RESPONSE_MODE_DEFAULT 0x50
 
 CanbusClass::CanbusClass() {
@@ -59,7 +75,8 @@ CanbusClass::CanbusClass() {
 }
 
 bool CanbusClass::init(CanSpeed canSpeed) {
-    return mcp2515_init(canSpeed);
+    _initialized =  mcp2515_init(canSpeed);
+    return _initialized;
 }
 
 // Standard offsets for elithion
@@ -72,13 +89,11 @@ bool CanbusClass::init(CanSpeed canSpeed) {
 static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t response_mode, uint8_t response_pid_hi, uint8_t response_pid_low) {
 	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
 	if (mcp2515_send_message(message)) {
-        Serial.println("message sent");
         // Timeout should be smarter than a loop!
         int timeout = 0;
         while (timeout < 4000) {
             timeout++;
             if (mcp2515_check_message()) {
-                Serial.println("message available");
                 if (mcp2515_get_message(message)) {
                     // See if we got the right response; making sure we got enough bytes (at least 3 to read the high and low
                     if ((message->id == pid_reply) && (message->data[NUM_BYTES_OFFSET] >= 3) && (message->data[MODE_OFFSET] == response_mode) && (message->data[PID_HI_OFFSET] == response_pid_hi) && (message->data[PID_LO_OFFSET] == response_pid_low)) {
@@ -121,7 +136,7 @@ static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t res
         }
     } else {
 #if DEBUG
-        Serial.println("message NOT sent");
+        Serial.println("ERROR: message NOT sent");
 #endif
     }
  	return false;
@@ -142,106 +157,77 @@ static void setupElithionCanMessage(tCAN *message, uint8_t mode, uint8_t pid_hi,
 	message->data[7] = 0x00;
 }
 
-// readFromCanBusPID(ELITHION_PID_REQUEST, ELITHION_PID_MODE_PACK, ELITHION_PID_SOC, 0, ELITHION_PID_RESPONSE,
-
-//static bool readElithionMessageFromCanBus(tCAN *message, uint8_t mode, uint8_t pid_hi, uint8_t pid_low, uint16_t pid_response_mode, uint16_t pid_response_hi, uint16_t pid_response_low)
-//{
-//    setupElithionCanMessage(message, mode, pid_hi, pid_low);
-//    return sendAndReceiveMessage(message, ELITHION_PID_RESPONSE, pid_response_mode, pid_response_hi, pid_response_low);
-//}
-
-static bool readElithionDefaultMessageFromCanBus(tCAN *message, uint8_t pid_hi, uint8_t pid_low, uint16_t pid_response_hi, uint16_t pid_response_low)
-{
-    // most messages have a standard mode and standard response
+static bool readElithionDefaultMessageFromCanBus(tCAN *message, uint8_t pid_hi, uint8_t pid_low) {
+    // most messages have a standard mode and standard response so make this commonized
     setupElithionCanMessage(message, ELITHION_PID_MODE_DEFAULT, pid_hi, pid_low);
-    return sendAndReceiveMessage(message, ELITHION_PID_RESPONSE, ELITHION_PID_RESPONSE_MODE_DEFAULT, pid_response_hi, pid_response_low);
+    return sendAndReceiveMessage(message, ELITHION_PID_RESPONSE, ELITHION_PID_RESPONSE_MODE_DEFAULT, pid_hi, pid_low);
 }
 
-uint8_t CanbusClass::stateOfCharge() {
+static int readElithionTwoByteValue(uint8_t pid_hi) {
 	tCAN message;
-    if (readElithionDefaultMessageFromCanBus(&message, ELITHION_PID_PACK_SOC, 0/*pid_low*/, 0x50/*response pid hi*/, 0/*response pid low*/)) {
-        Serial.println("got data!");
-        return message.data[4]; // percentage 
+    if (readElithionDefaultMessageFromCanBus(&message, pid_hi, 0)) {
+        uint8_t msb = message.data[4];
+        uint8_t lsb = message.data[5];
+        return ((msb << 8) | lsb);
     } else {
-#if DEBUG
-        Serial.println("could not read SOC");
-#endif
         return 0;
     }
 }
 
-
-/*
-
-char CanbusClass::message_rx(unsigned char *buffer) {
-		tCAN message;
-	
-		if (mcp2515_check_message()) {
-		
-			
-			// Lese die Nachricht aus dem Puffern des MCP2515
-			if (mcp2515_get_message(&message)) {
-			//	print_can_message(&message);
-			//	PRINT("\n");
-				buffer[0] = message.data[0];
-				buffer[1] = message.data[1];
-				buffer[2] = message.data[2];
-				buffer[3] = message.data[3];
-				buffer[4] = message.data[4];
-				buffer[5] = message.data[5];
-				buffer[6] = message.data[6];
-				buffer[7] = message.data[7];								
-//				buffer[] = message[];
-//				buffer[] = message[];
-//				buffer[] = message[];
-//				buffer[] = message[];																												
-			}
-			else {
-			//	PRINT("Kann die Nachricht nicht auslesen\n\n");
-			}
-		}
-
-}
-
-char CanbusClass::message_tx(void) {
+static int readElithionSingleByteValue(uint8_t pid_hi) {
 	tCAN message;
-
-
-	// einige Testwerte
-	message.id = PID_REQUEST;
-	message.header.rtr = 0;
-	message.header.length = 8;
-	message.data[0] = 0x02;
-	message.data[1] = 0x01;
-	message.data[2] = 0x05;
-	message.data[3] = 0x00;
-	message.data[4] = 0x00;
-	message.data[5] = 0x00;
-	message.data[6] = 0x00;
-	message.data[7] = 0x00;						
-	
-	
-	
-	
-//	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), (1<<REQOP1));	
-		mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
-		
-	if (mcp2515_send_message(&message)) {
-		//	SET(LED2_HIGH);
-		return 1;
-	
-	}
-	else {
-	//	PRINT("Fehler: konnte die Nachricht nicht auslesen\n\n");
-	return 0;
-	}
-return 1;
- 
+    if (readElithionDefaultMessageFromCanBus(&message, pid_hi, 0)) {
+        uint8_t msb = message.data[4];
+        uint8_t lsb = message.data[5];
+        return ((msb << 8) | lsb);
+    } else {
+        return 0;
+    }
 }
 
- */
-//     if(Canbus.ecu_req(ENGINE_RPM,buffer) == 1)          // Request for engine RPM
+uint8_t CanbusClass::getStateOfCharge() {
+    return readElithionSingleByteValue(ELITHION_PID_PACK_SOC);
+}
+
+float CanbusClass::getPackCurrent() {
+    return readElithionTwoByteValue(0x68) * (100 / 1000); // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
+}
+
+float CanbusClass::getAverageSourceCurrent() {
+    return readElithionTwoByteValue(0x69) * (100 / 1000);
+}
+
+float CanbusClass::getAverageLoadCurrent() {
+    return readElithionTwoByteValue(0x6A) * (100 / 1000);
+}
+
+float CanbusClass::getSourceCurrent() {
+    return readElithionTwoByteValue(0x6B) * (100 / 1000);
+}
+
+float CanbusClass::getLoadCurrent() {
+    return readElithionTwoByteValue(0x6C) * (100 / 1000);
+}
+
+float CanbusClass::getPackVoltage() {
+    return readElithionTwoByteValue(0x46) * (100 / 1000); // in 100mV
+}
 
 
-
-
+void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *storedFault, FaultKindOptions *presentWarnings) {
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, ELITHION_PID_FAULT, 0/*pid_low*/)) {
+        *presentFaults = message.data[4];
+        *storedFault = message.data[5];
+        *presentWarnings = message.data[6];
+    } else {
+        // Indicate a fault, in that we couldn't read it!
+        if (!_initialized) {
+            *presentFaults = FaultKindCanBusFailedInitialization;
+        } else {
+            *presentFaults = FaultKindCantFindBMSOnCanBus;
+        }
+        *storedFault = 0;
+        *presentWarnings = 0;
+    }
+}
