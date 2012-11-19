@@ -27,7 +27,7 @@
 #include <HardwareSerial.h>
 
 #define DEBUG 0
-
+#define MOCK_DATA 1
 
 const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
     "Driving and plugged in",
@@ -89,48 +89,59 @@ bool CanbusClass::init(CanSpeed canSpeed) {
 static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t response_mode, uint8_t response_pid_hi, uint8_t response_pid_low) {
 	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
 	if (mcp2515_send_message(message)) {
-        // Timeout should be smarter than a loop!
-        int timeout = 0;
-        while (timeout < 4000) {
-            timeout++;
+        long startTime = millis();
+#define TIMEOUT_DURATION 30 // Long enough? X milliseconds
+        bool timeout = false;
+        while (!timeout) {
             if (mcp2515_check_message()) {
                 if (mcp2515_get_message(message)) {
                     // See if we got the right response; making sure we got enough bytes (at least 3 to read the high and low
                     if ((message->id == pid_reply) && (message->data[NUM_BYTES_OFFSET] >= 3) && (message->data[MODE_OFFSET] == response_mode) && (message->data[PID_HI_OFFSET] == response_pid_hi) && (message->data[PID_LO_OFFSET] == response_pid_low)) {
                         return true;
                     } else {
-#if DEBUG
-                        Serial.print("reply id: 0x");
-                        Serial.print(message->id, HEX);
-                        Serial.print("expecting id: 0x");
-                        Serial.print(pid_reply, HEX);
-                        Serial.print(" bytes: ");
-                        Serial.print(message->data[NUM_BYTES_OFFSET], HEX);
-                        Serial.print(" mode: ");
-                        Serial.print(message->data[MODE_OFFSET], HEX);
-                        Serial.print("expecting mode: 0x");
-                        Serial.print(response_mode, HEX);
-                        
-                        Serial.print(" pid hi: ");
-                        Serial.print(message->data[PID_HI_OFFSET], HEX);
-                        
-                        Serial.print("expecting hi: 0x");
-                        Serial.print(response_pid_hi, HEX);
-                        
-                        
-                        Serial.print(" pid low: ");
-                        Serial.print(message->data[PID_LO_OFFSET], HEX);
-
-                        Serial.print("expecting low: 0x");
-                        Serial.print(response_pid_low, HEX);
-                        
-                        Serial.println("");
-#endif
+//#if DEBUG
+//                        Serial.print("reply id: 0x");
+//                        Serial.print(message->id, HEX);
+//                        Serial.print("expecting id: 0x");
+//                        Serial.print(pid_reply, HEX);
+//                        Serial.print(" bytes: ");
+//                        Serial.print(message->data[NUM_BYTES_OFFSET], HEX);
+//                        Serial.print(" mode: ");
+//                        Serial.print(message->data[MODE_OFFSET], HEX);
+//                        Serial.print("expecting mode: 0x");
+//                        Serial.print(response_mode, HEX);
+//                        
+//                        Serial.print(" pid hi: ");
+//                        Serial.print(message->data[PID_HI_OFFSET], HEX);
+//                        
+//                        Serial.print("expecting hi: 0x");
+//                        Serial.print(response_pid_hi, HEX);
+//                        
+//                        
+//                        Serial.print(" pid low: ");
+//                        Serial.print(message->data[PID_LO_OFFSET], HEX);
+//
+//                        Serial.print("expecting low: 0x");
+//                        Serial.print(response_pid_low, HEX);
+//                        
+//                        Serial.println("");
+//#endif
                     }
                 } else {
 #if DEBUG
                     Serial.println("couldn't get the message even though one was available");
 #endif
+                }
+            }
+            
+            // See if we hit the timeout duration
+            long endTime = millis();
+            if (endTime < startTime) {
+                // roll over
+                timeout = true;
+            } else {
+                if ((endTime - startTime) > TIMEOUT_DURATION) {
+                    timeout = true;
                 }
             }
         }
@@ -168,18 +179,17 @@ static int readElithionTwoByteValue(uint8_t pid_hi) {
     if (readElithionDefaultMessageFromCanBus(&message, pid_hi, 0)) {
         uint8_t msb = message.data[4];
         uint8_t lsb = message.data[5];
-        return ((msb << 8) | lsb);
+        int result = ((msb << 8) | lsb);
+        return result;
     } else {
         return 0;
     }
 }
 
-static int readElithionSingleByteValue(uint8_t pid_hi) {
+static uint8_t readElithionSingleByteValue(uint8_t pid_hi) {
 	tCAN message;
     if (readElithionDefaultMessageFromCanBus(&message, pid_hi, 0)) {
-        uint8_t msb = message.data[4];
-        uint8_t lsb = message.data[5];
-        return ((msb << 8) | lsb);
+        return message.data[4];
     } else {
         return 0;
     }
@@ -190,27 +200,37 @@ uint8_t CanbusClass::getStateOfCharge() {
 }
 
 float CanbusClass::getPackCurrent() {
-    return readElithionTwoByteValue(0x68) * (100 / 1000); // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
+    return readElithionTwoByteValue(0x68) * 100.0 / 1000.0; // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
 }
 
 float CanbusClass::getAverageSourceCurrent() {
-    return readElithionTwoByteValue(0x69) * (100 / 1000);
+    return readElithionTwoByteValue(0x69) * 100.0 / 1000.0;
 }
 
 float CanbusClass::getAverageLoadCurrent() {
-    return readElithionTwoByteValue(0x6A) * (100 / 1000);
+    return readElithionTwoByteValue(0x6A) * 100.0 / 1000.0;
 }
 
 float CanbusClass::getSourceCurrent() {
-    return readElithionTwoByteValue(0x6B) * (100 / 1000);
+    return readElithionTwoByteValue(0x6B) * 100.0 / 1000.0;
 }
 
 float CanbusClass::getLoadCurrent() {
-    return readElithionTwoByteValue(0x6C) * (100 / 1000);
+    return readElithionTwoByteValue(0x6C) * 100.0 / 1000.0;
 }
 
 float CanbusClass::getPackVoltage() {
-    return readElithionTwoByteValue(0x46) * (100 / 1000); // in 100mV
+#if MOCK_DATA
+    static long lastTime = 0;
+    long endTime = millis();
+    if ((endTime - lastTime) > 2000) {
+        lastTime = endTime;
+        return 18;
+    } else {
+        return 132;
+    }
+#endif
+    return readElithionTwoByteValue(0x46) * 100.0 / 1000.0; // in 100mV
 }
 
 
@@ -221,6 +241,10 @@ void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *st
         *storedFault = message.data[5];
         *presentWarnings = message.data[6];
     } else {
+#if DEBUG
+        Serial.println("BMS not found");
+#endif
+        
         // Indicate a fault, in that we couldn't read it!
         if (!_initialized) {
             *presentFaults = FaultKindCanBusFailedInitialization;
@@ -229,5 +253,32 @@ void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *st
         }
         *storedFault = 0;
         *presentWarnings = 0;
+        
+#if MOCK_DATA
+        static long lastTime = 0;
+        if (lastTime != 0) {
+            long endTime = millis();
+            if ((endTime - lastTime) > 10000) {
+//                lastTime = endTime;
+                *presentFaults = 0;
+//                *presentFaults = FaultKindCantFindBMSOnCanBus;
+            } else if ((endTime - lastTime) > 5000) {
+                *presentWarnings = FaultKindDischargeOverCurrent;
+  //              *presentFaults = 0;
+            }
+        } else {
+            lastTime = millis();
+        }
+#endif
     }
+    
+#if DEBUG
+    Serial.print("faults:");
+    Serial.println(*presentFaults, 16);
+    Serial.print("stored:");
+    Serial.println(*storedFault, 16);
+    Serial.print("warnings:");
+    Serial.println(*presentWarnings, 16);
+#endif
+    
 }
