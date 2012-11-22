@@ -27,7 +27,9 @@
 #include <HardwareSerial.h>
 
 #define DEBUG 0
-#define MOCK_DATA 1
+#define MOCK_DATA 0
+
+#define TIMEOUT_DURATION 40 // Long enough? X milliseconds
 
 const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
     "Driving and plugged in",
@@ -90,7 +92,6 @@ static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t res
 	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
 	if (mcp2515_send_message(message)) {
         long startTime = millis();
-#define TIMEOUT_DURATION 30 // Long enough? X milliseconds
         bool timeout = false;
         while (!timeout) {
             if (mcp2515_check_message()) {
@@ -199,11 +200,21 @@ uint8_t CanbusClass::getStateOfCharge() {
     return readElithionSingleByteValue(ELITHION_PID_PACK_SOC);
 }
 
+uint16_t CanbusClass::getDepthOfDischarge() {
+#if MOCK_DATA
+    return 10; // ah
+#endif
+    return readElithionTwoByteValue(ELITHION_PID_PACK_DOD);
+}
+
 float CanbusClass::getPackCurrent() {
     return readElithionTwoByteValue(0x68) * 100.0 / 1000.0; // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
 }
 
 float CanbusClass::getAverageSourceCurrent() {
+#if MOCK_DATA
+    return 30;
+#endif
     return readElithionTwoByteValue(0x69) * 100.0 / 1000.0;
 }
 
@@ -217,6 +228,70 @@ float CanbusClass::getSourceCurrent() {
 
 float CanbusClass::getLoadCurrent() {
     return readElithionTwoByteValue(0x6C) * 100.0 / 1000.0;
+}
+
+LimitCause CanbusClass::getChargeLimitCause() {
+#if MOCK_DATA
+    static long lastTime = 0;
+    if (lastTime != 0) {
+        long endTime = millis();
+        LimitCause r = LimitCauseNone;
+        while ((endTime - lastTime) > 5000 && r < LimitCauseDischargingCurrentPeakTooLong) {
+            r++;
+            endTime -= 5000;
+        }
+        if (r == LimitCauseDischargingCurrentPeakTooLong) {
+            r = 0;
+        }
+        return r;
+    } else {
+        lastTime = millis();
+    }
+#endif
+ 	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x64, 0)) {
+        return message.data[5];
+    } else {
+        return 0;
+    }
+}
+
+LimitCause CanbusClass::getDischargeLimitCause() {
+ 	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x65, 0)) {
+        return message.data[5];
+    } else {
+        return 0;
+    }
+}
+
+#define ROUND_255_AS_PERCENTAGE(v) round(100.0*(float)(v)/255.0)
+
+int8_t CanbusClass::getChargeLimitValue() {
+#if MOCK_DATA
+    return 90;
+#endif
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x64, 0)) {
+#if 0 // DEBUG
+        Serial.print("charg limit:");
+        Serial.println(message.data[4]);
+        Serial.print("charg limit per:");
+        Serial.println(ROUND_255_AS_PERCENTAGE(message.data[4]));
+#endif
+        return ROUND_255_AS_PERCENTAGE(message.data[4]);
+    } else {
+        return ERROR_READING_LIMIT_VALUE;
+    }
+}
+
+int8_t CanbusClass::getDischargeLimitValue() {
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x65, 0)) {
+        return ROUND_255_AS_PERCENTAGE(message.data[4]);
+    } else {
+        return ERROR_READING_LIMIT_VALUE;
+    }
 }
 
 float CanbusClass::getPackVoltage() {
@@ -233,6 +308,80 @@ float CanbusClass::getPackVoltage() {
     return readElithionTwoByteValue(0x46) * 100.0 / 1000.0; // in 100mV
 }
 
+#define CONVERT_ENCODED_MVOLT_TO_VOLT(v) (2.0 + (v)*10.0/1000.0) // in 10mv increments, plus 2.0v
+
+float CanbusClass::getMinVoltage() {
+#if MOCK_DATA
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(30);
+#endif
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(readElithionSingleByteValue(0x43));
+}
+
+float CanbusClass::getAvgVoltage() {
+#if MOCK_DATA
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(50);
+#endif
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(readElithionSingleByteValue(0x44));
+}
+
+float CanbusClass::getMaxVoltage() {
+#if MOCK_DATA
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(60);
+#endif
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(readElithionSingleByteValue(0x45));
+}
+
+uint8_t CanbusClass::getMinVoltageCellNumber() {
+    // this is racy...and min voltage + cell should be read at the same time
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x43, 0)) {
+        return message.data[5];
+    } else {
+        return 0;
+    }
+}
+
+uint8_t CanbusClass::getAvgVoltageCellNumber() {
+    // this is racy...and min voltage + cell should be read at the same time
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x44, 0)) {
+        return message.data[5];
+    } else {
+        return 0;
+    }
+}
+
+uint8_t CanbusClass::getMaxVoltageCellNumber() {
+    // this is racy...and min voltage + cell should be read at the same time
+	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x45, 0)) {
+        return message.data[5];
+    } else {
+        return 0;
+    }
+}
+
+
+IOFlags CanbusClass::getIOFlags() {
+#if MOCK_DATA
+    return IOFlagPowerFromSource; // charging
+#endif
+    return readElithionSingleByteValue(0x66);
+}
+
+void CanbusClass::clearStoredFault() {
+	tCAN message;
+    setupElithionCanMessage(&message, 0x14, ELITHION_PID_FAULT, 0);
+    // we ignore the result
+    bool result = sendAndReceiveMessage(&message, 0x54, ELITHION_PID_RESPONSE_MODE_DEFAULT, ELITHION_PID_FAULT, 0);
+#if DEBUG
+    if (result) {
+        Serial.println("faults should ahve been cleared");
+    } else {
+        Serial.println("failed to clear faults");
+    }
+#endif
+}
 
 void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *storedFault, FaultKindOptions *presentWarnings) {
 	tCAN message;
@@ -241,10 +390,6 @@ void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *st
         *storedFault = message.data[5];
         *presentWarnings = message.data[6];
     } else {
-#if DEBUG
-        Serial.println("BMS not found");
-#endif
-        
         // Indicate a fault, in that we couldn't read it!
         if (!_initialized) {
             *presentFaults = FaultKindCanBusFailedInitialization;
@@ -272,7 +417,7 @@ void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *st
 #endif
     }
     
-#if DEBUG
+#if 0 // DEBUG
     Serial.print("faults:");
     Serial.println(*presentFaults, 16);
     Serial.print("stored:");

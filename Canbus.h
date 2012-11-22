@@ -71,6 +71,39 @@ enum _StoredFaultKind {
 
 typedef uint8_t StoredFaultKind;
 
+
+enum _IOFlags {
+    IOFlagPowerFromSource = 1 << 0, //	01h	there is power from the source
+    IOFlagPowerFromLoad = 1 << 1, //	02h	there is power from the load
+    IOFlagInterlockTripped = 1 << 2, // 	04h	the interlock is tripped
+    IOFlagHardWireContactorRequest = 1 << 3, //	08h	there is a hard wire contactor request
+    IOFlagCANContactorRequest = 1 << 4, //	10h	there is a CAN contactor request
+    IOFlagHighLimitSet = 1 << 5, //	20h	the HLIM is set
+    IOFlagLowLimitSet = 1 << 6,//	40h	the LLIM is set
+    IOFlagFanIsOn = 1 << 7, //	80h	the Fan is on
+};
+
+typedef uint8_t IOFlags;
+
+
+enum _LimitCause {
+    LimitCauseErrorReadingValue = -1,
+    LimitCauseNone = 0, //	0	No limit
+    LimitCausePackVoltageTooLow, // 1	1	Pack voltage too low
+    LimitCausePackVoltageTooHigh, // 2	2	Pack voltage too high
+    LimitCauseCellVoltageTooLow, // 3	3	Cell voltage too low
+    LimitCauseCellVoltageTooHigh, //4	4	Cell voltage too high
+    LimitCauseTempTooHighToCharge, // 5	5	Temperature too high for charging
+    LimitCauseTempTooLowToCharge, // 6	6	Temperature too low for charging
+    LimitCauseTempTooHighToDischarge, // 7	7	Temperature too high for discharging
+    LimitCauseTempTooLowToDischarge, // 8	8	Temperature too low for discharging
+    LimitCauseChargingCurrentPeakTooLong, // 9	9	Charging current peak lasted too long
+    LimitCauseDischargingCurrentPeakTooLong, //10	A	Discharging current peak lasted too long
+};
+typedef int8_t LimitCause;
+
+#define ERROR_READING_LIMIT_VALUE -1
+
 class CanbusClass
 {
 private:
@@ -81,9 +114,22 @@ public:
   
     // Elithion BMS options
     uint8_t getStateOfCharge(); // Returns a value from 0 to 100
+    uint16_t getDepthOfDischarge(); // [Ah]
+    
+    LimitCause getChargeLimitCause();
+    LimitCause getDischargeLimitCause();
+    
+    int8_t getChargeLimitValue(); // 0-100 percent; returns ERROR_READING_LIMIT_VALUE on error
+    int8_t getDischargeLimitValue(); // 0-100 percent; returns ERROR_READING_LIMIT_VALUE on error
     
     // Pack
     float getPackVoltage(); // in volts
+    float getMinVoltage(); // volts, indivdual cell voltage
+    float getAvgVoltage();
+    float getMaxVoltage();
+    uint8_t getMinVoltageCellNumber();
+    uint8_t getAvgVoltageCellNumber();
+    uint8_t getMaxVoltageCellNumber();
     
     // Current
     float getPackCurrent();  // amps
@@ -93,6 +139,9 @@ public:
     float getLoadCurrent(); // amps
     
     void getFaults(FaultKindOptions *presentFaults, StoredFaultKind *storedFault, FaultKindOptions *presentWarnings);
+    void clearStoredFault();
+    
+    IOFlags getIOFlags();
     
 
 };
