@@ -131,6 +131,9 @@ public:
     uint8_t getAvgVoltageCellNumber();
     uint8_t getMaxVoltageCellNumber();
     
+    int getNumberOfCells();
+    float getVoltageForCell(int cell);
+    
     // Current
     float getPackCurrent();  // amps
     float getAverageSourceCurrent(); // amps

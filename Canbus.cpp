@@ -29,7 +29,11 @@
 #define DEBUG 0
 #define MOCK_DATA 0
 
-#define TIMEOUT_DURATION 40 // Long enough? X milliseconds
+#if MOCK_DATA
+    #define TIMEOUT_DURATION 5 // makes testing faster when using mock data
+#else
+    #define TIMEOUT_DURATION 20 // Long enough? X milliseconds
+#endif
 
 const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
     "Driving and plugged in",
@@ -87,6 +91,7 @@ bool CanbusClass::init(CanSpeed canSpeed) {
 #define PID_HI_OFFSET 2
 #define PID_LO_OFFSET 3
 
+#define CONVERT_ENCODED_MVOLT_TO_VOLT(v) (2.0 + (v)*10.0/1000.0) // in 10mv increments, plus 2.0v
 
 static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t response_mode, uint8_t response_pid_hi, uint8_t response_pid_low) {
 	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
@@ -196,7 +201,36 @@ static uint8_t readElithionSingleByteValue(uint8_t pid_hi) {
     }
 }
 
+int CanbusClass::getNumberOfCells() {
+#if MOCK_DATA
+    return 48;
+#else
+    tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x40, 0)) {
+        return message.data[5]; // second parameter is the number of cells (
+    } else {
+        return 0;
+    }
+#endif
+}
+
+float CanbusClass::getVoltageForCell(int cell) {
+#if MOCK_DATA
+    return CONVERT_ENCODED_MVOLT_TO_VOLT(60 + cell);
+#else
+ 	tCAN message;
+    if (readElithionDefaultMessageFromCanBus(&message, 0x14, cell)) {
+        return CONVERT_ENCODED_MVOLT_TO_VOLT(message.data[4]);
+    } else {
+        return 2.0; // something better??
+    }
+#endif
+}
+
 uint8_t CanbusClass::getStateOfCharge() {
+#if MOCK_DATA
+    return 69;
+#endif
     return readElithionSingleByteValue(ELITHION_PID_PACK_SOC);
 }
 
@@ -308,8 +342,6 @@ float CanbusClass::getPackVoltage() {
     return readElithionTwoByteValue(0x46) * 100.0 / 1000.0; // in 100mV
 }
 
-#define CONVERT_ENCODED_MVOLT_TO_VOLT(v) (2.0 + (v)*10.0/1000.0) // in 10mv increments, plus 2.0v
-
 float CanbusClass::getMinVoltage() {
 #if MOCK_DATA
     return CONVERT_ENCODED_MVOLT_TO_VOLT(30);
@@ -402,6 +434,8 @@ void CanbusClass::getFaults(FaultKindOptions *presentFaults, StoredFaultKind *st
 #if MOCK_DATA
         static long lastTime = 0;
         if (lastTime != 0) {
+            *presentWarnings = FaultKindOverTemperature;
+
             long endTime = millis();
             if ((endTime - lastTime) > 10000) {
 //                lastTime = endTime;
