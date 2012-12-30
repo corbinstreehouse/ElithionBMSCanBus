@@ -40,10 +40,6 @@ enum _FaultKindOptions {
 
 typedef uint16_t FaultKindOptions; // bitset of the above fault kinds
 
-// This must match the bitset options above
-#define MAX_FAULT_MESSAGES 10
-extern const char *FaultKindMessages[MAX_FAULT_MESSAGES]; // one for each of the above errors declared in the same order
-
 enum _StoredFaultKind {
     StoredFaultKindNone = 0, // 00h	No fault
     StoredFaultKindDrivingOffWhilePluggedIn = 1, //1	01h	Driving off while plugged in

@@ -35,20 +35,6 @@
     #define TIMEOUT_DURATION 20 // Long enough? X milliseconds
 #endif
 
-const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
-    "Driving and plugged in",
-    "Interlock tripped",
-    "Communication fault",
-    "Charge over current",
-    "Discharge over current",
-    "Over Temperature",
-    "Under voltage",
-    "Over voltage",
-    "BMS not found on CAN Bus",
-    "CAN Bus init failed"
-};
-
-
 // http://lithiumate.elithion.com/php/menu_setup.php#Standard_output_messages
 // TODO: this are all configurable and would be nice to set for the class
 #define ELITHION_CAN_ID 0x620
@@ -63,7 +49,7 @@ const char *FaultKindMessages[MAX_FAULT_MESSAGES] = {
 // TODOO: maybe make these tables in memory instead of commands to save space? 
 // Pack messages
 #define ELITHION_PID_MODE_DEFAULT 0x10
-// TODO: STATUS -> RESISTENCE
+
 #define ELITHION_PID_PACK_SOC 0x50
 #define ELITHION_PID_PACK_CAPACITY 0x51
 #define ELITHION_PID_PACK_DOD 0x52
@@ -90,8 +76,6 @@ bool CanbusClass::init(CanSpeed canSpeed) {
 #define MODE_OFFSET 1
 #define PID_HI_OFFSET 2
 #define PID_LO_OFFSET 3
-
-#define CONVERT_ENCODED_MVOLT_TO_VOLT(v) (2.0 + (v)*10.0/1000.0) // in 10mv increments, plus 2.0v
 
 static bool sendAndReceiveMessage(tCAN *message, uint16_t pid_reply, uint8_t response_mode, uint8_t response_pid_hi, uint8_t response_pid_low) {
 	mcp2515_bit_modify(CANCTRL, (1<<REQOP2)|(1<<REQOP1)|(1<<REQOP0), 0);
@@ -214,6 +198,13 @@ int CanbusClass::getNumberOfCells() {
 #endif
 }
 
+// Is this smaller than a function call?
+//#define CONVERT_ENCODED_MVOLT_TO_VOLT(v) (2.0 + (v)*10.0/1000.0) // in 10mv increments, plus 2.0v
+// Function call is slightly smaller than the #define
+static float CONVERT_ENCODED_MVOLT_TO_VOLT(float v) {
+    return 2.0 + (v)*10.0/1000.0;
+}
+
 float CanbusClass::getVoltageForCell(int cell) {
 #if MOCK_DATA
     return CONVERT_ENCODED_MVOLT_TO_VOLT(60 + cell);
@@ -241,27 +232,31 @@ uint16_t CanbusClass::getDepthOfDischarge() {
     return readElithionTwoByteValue(ELITHION_PID_PACK_DOD);
 }
 
+static float milliValueToNormalValue(int v) {
+    return v * 100.0 / 1000.0;
+}
+
 float CanbusClass::getPackCurrent() {
-    return readElithionTwoByteValue(0x68) * 100.0 / 1000.0; // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
+    return milliValueToNormalValue(readElithionTwoByteValue(0x68)); // Units returned is 100mA. Multiply by 100 to get mA. Then divide by 1000 to get amps.
 }
 
 float CanbusClass::getAverageSourceCurrent() {
 #if MOCK_DATA
     return 30;
 #endif
-    return readElithionTwoByteValue(0x69) * 100.0 / 1000.0;
+    return milliValueToNormalValue(readElithionTwoByteValue(0x69));
 }
 
 float CanbusClass::getAverageLoadCurrent() {
-    return readElithionTwoByteValue(0x6A) * 100.0 / 1000.0;
+    return milliValueToNormalValue(readElithionTwoByteValue(0x6A));
 }
 
 float CanbusClass::getSourceCurrent() {
-    return readElithionTwoByteValue(0x6B) * 100.0 / 1000.0;
+    return milliValueToNormalValue(readElithionTwoByteValue(0x6B));
 }
 
 float CanbusClass::getLoadCurrent() {
-    return readElithionTwoByteValue(0x6C) * 100.0 / 1000.0;
+    return milliValueToNormalValue(readElithionTwoByteValue(0x6C));
 }
 
 LimitCause CanbusClass::getChargeLimitCause() {
@@ -339,7 +334,7 @@ float CanbusClass::getPackVoltage() {
         return 132;
     }
 #endif
-    return readElithionTwoByteValue(0x46) * 100.0 / 1000.0; // in 100mV
+    return milliValueToNormalValue(readElithionTwoByteValue(0x46)); // in 100mV
 }
 
 float CanbusClass::getMinVoltage() {
